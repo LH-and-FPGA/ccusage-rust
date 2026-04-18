@@ -26,10 +26,6 @@ fn fmt_usd(v: f64) -> String {
     format!("${v:.2}")
 }
 
-fn join_models(ms: &[String]) -> String {
-    ms.join(", ")
-}
-
 /// Colors are enabled iff stdout is a TTY and `NO_COLOR` is not set.
 /// (Honors the de-facto https://no-color.org/ standard.)
 fn use_color() -> bool {
@@ -88,46 +84,17 @@ fn cost_cell(v: f64, color: bool) -> Cell {
     }
 }
 
-/// Pick a stable-ish color for a given model name so distinct models stand out
-/// from each other but the same model keeps the same color across rows.
-fn color_for_model(name: &str) -> Color {
-    let palette = [
-        Color::Magenta,
-        Color::Blue,
-        Color::Green,
-        Color::Cyan,
-        Color::Red,
-        Color::Yellow,
-    ];
-    let h: u32 = name
-        .bytes()
-        .fold(2166136261u32, |acc, b| acc.wrapping_mul(16777619) ^ b as u32);
-    palette[(h as usize) % palette.len()]
-}
-
 fn models_cell(ms: &[String], color: bool) -> Cell {
-    if !color || ms.is_empty() {
-        return Cell::new(join_models(ms));
+    // One model per line; comfy_table miscounts widths when ANSI escapes are
+    // embedded inside cell content, so we let it color the whole cell uniformly
+    // via `.fg()` and just put each model on its own line for readability.
+    let text = ms.join("\n");
+    let c = Cell::new(text);
+    if color && !ms.is_empty() {
+        c.fg(Color::Magenta).add_attribute(Attribute::Bold)
+    } else {
+        c
     }
-    let mut out = String::new();
-    for (i, m) in ms.iter().enumerate() {
-        if i > 0 {
-            out.push_str(", ");
-        }
-        // ANSI: bold + 256-color foreground per model.
-        let (r, g, b) = match color_for_model(m) {
-            Color::Magenta => (5, 1, 5),
-            Color::Blue => (1, 3, 5),
-            Color::Green => (1, 5, 1),
-            Color::Cyan => (1, 5, 5),
-            Color::Red => (5, 1, 1),
-            Color::Yellow => (5, 5, 1),
-            _ => (5, 5, 5),
-        };
-        let code = 16 + 36 * r + 6 * g + b;
-        out.push_str(&format!("\x1b[1;38;5;{code}m{m}\x1b[0m"));
-    }
-    Cell::new(out)
 }
 
 fn total_label_cell(color: bool) -> Cell {
