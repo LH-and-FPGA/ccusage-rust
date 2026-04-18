@@ -46,4 +46,6 @@ pub enum Command {
     Session(CommonArgs),
     /// Show 5-hour billing blocks.
     Blocks(CommonArgs),
+    /// Open the interactive TUI dashboard.
+    Tui(CommonArgs),
 }

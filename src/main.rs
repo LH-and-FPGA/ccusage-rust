@@ -11,6 +11,7 @@ mod output;
 mod paths;
 mod pricing;
 mod schema;
+mod tui;
 
 use cli::{Cli, Command, CommonArgs};
 
@@ -86,6 +87,16 @@ fn run_blocks(args: CommonArgs) -> Result<()> {
     Ok(())
 }
 
+fn run_tui(args: CommonArgs) -> Result<()> {
+    let priced = load_priced(&args)?;
+    let tz = resolve_tz(&args.timezone)?;
+    let daily = aggregate::daily(&priced, &tz);
+    let monthly = aggregate::monthly(&priced, &tz);
+    let session = aggregate::session(&priced);
+    let blocks_v = blocks::identify(&priced);
+    tui::run(daily, monthly, session, blocks_v)
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
@@ -93,5 +104,6 @@ fn main() -> Result<()> {
         Command::Monthly(a) => run_monthly(a),
         Command::Session(a) => run_session(a),
         Command::Blocks(a) => run_blocks(a),
+        Command::Tui(a) => run_tui(a),
     }
 }
