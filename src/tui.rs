@@ -29,7 +29,7 @@ use crate::aggregate::{Bucket, Totals};
 use crate::blocks::SessionBlock;
 
 const TICK_MS: u64 = 33; // ~30fps
-const ANIM_MS: f64 = 500.0;
+const ANIM_MS: f64 = 800.0; // grow-in duration on view switch
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum View {
@@ -134,7 +134,20 @@ impl App {
     /// Sine-pulse envelope (0.5 .. 1.0) for the active block.
     fn pulse(&self) -> f64 {
         let t = self.started_at.elapsed().as_secs_f64();
-        0.75 + 0.25 * (t * 3.0).sin()
+        0.5 + 0.5 * (t * 3.5).sin()
+    }
+
+    /// Boolean blinker, toggles ~every 500ms. Used for the tab dot indicator.
+    fn blink(&self) -> bool {
+        let t = self.started_at.elapsed().as_millis();
+        (t / 500) % 2 == 0
+    }
+
+    /// Braille spinner frame, advances ~every 100ms.
+    fn spinner(&self) -> char {
+        const FRAMES: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+        let t = self.started_at.elapsed().as_millis() / 100;
+        FRAMES[(t as usize) % FRAMES.len()]
     }
 
     fn current_len(&self) -> usize {
@@ -267,9 +280,16 @@ enum ViewKind {
 }
 
 fn draw_tabs(f: &mut Frame, area: Rect, app: &App) {
+    let dot = if app.blink() { "● " } else { "  " };
     let titles: Vec<Line> = [View::Daily, View::Monthly, View::Session, View::Blocks]
         .iter()
-        .map(|v| Line::from(v.title()))
+        .map(|v| {
+            if *v == app.view {
+                Line::from(format!("{dot}{}", v.title()))
+            } else {
+                Line::from(format!("  {}", v.title()))
+            }
+        })
         .collect();
     let tabs = Tabs::new(titles)
         .block(Block::default().borders(Borders::ALL).title(" rcusage "))
@@ -314,6 +334,7 @@ fn split_buckets<'a>(app: &'a mut App, kind: ViewKind) -> (&'a [Bucket], &'a mut
 fn draw_buckets_view(f: &mut Frame, area: Rect, app: &mut App, kind: ViewKind) {
     let anim = app.anim();
     let pulse = app.pulse();
+    let spinner = app.spinner();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
@@ -325,12 +346,18 @@ fn draw_buckets_view(f: &mut Frame, area: Rect, app: &mut App, kind: ViewKind) {
 
     let (buckets, state) = split_buckets(app, kind);
     let selected = state.selected().unwrap_or(0);
-    draw_bar_panel(f, chunks[0], buckets, selected, anim, pulse, kind);
+    draw_bar_panel(f, chunks[0], buckets, selected, anim, pulse, spinner, kind);
     draw_list_panel(f, bottom[0], buckets, state);
     draw_detail_panel(f, bottom[1], buckets, selected);
 }
 
-fn make_bar<'a>(label: String, value: u64, color: Color, selected: bool) -> Bar<'a> {
+fn make_bar<'a>(
+    label: String,
+    height: u64,
+    text: String,
+    color: Color,
+    selected: bool,
+) -> Bar<'a> {
     let style = if selected {
         Style::default().fg(color).add_modifier(Modifier::BOLD)
     } else {
@@ -338,7 +365,8 @@ fn make_bar<'a>(label: String, value: u64, color: Color, selected: bool) -> Bar<
     };
     Bar::default()
         .label(Line::from(label))
-        .value(value)
+        .value(height)
+        .text_value(text)
         .style(style)
         .value_style(
             Style::default()
@@ -355,9 +383,10 @@ fn draw_bar_panel(
     selected: usize,
     anim: f64,
     pulse: f64,
+    spinner: char,
     kind: ViewKind,
 ) {
-    let title = format!(" {} cost (USD) ", match kind {
+    let title = format!(" {} {} cost (USD) ", spinner, match kind {
         ViewKind::Daily => "Daily",
         ViewKind::Monthly => "Monthly",
         ViewKind::Session => "Session",
@@ -383,20 +412,25 @@ fn draw_bar_panel(
     let start = end.saturating_sub(max_bars);
     let window = &buckets[start..end];
 
-    // Animate cost values: scale by `anim` and apply pulse to the selected bar.
+    // Bar height is animated only via the one-shot grow-in (`anim` 0→1 on view
+    // switch). The continuous `pulse` is applied to the selected bar's COLOR
+    // only, never to its numeric value, so the displayed number stays stable.
+    let _ = pulse;
     let bars: Vec<Bar> = window
         .iter()
         .enumerate()
         .map(|(i, b)| {
             let abs_idx = start + i;
             let is_sel = abs_idx == selected;
-            let mut scaled = (b.totals.total_cost_usd * 100.0 * anim) as u64;
-            if is_sel {
-                scaled = ((scaled as f64) * pulse) as u64;
-            }
+            let height = (b.totals.total_cost_usd * 100.0 * anim) as u64;
             let label = short_label(&b.key, kind);
-            let color = if is_sel { Color::Yellow } else { color_for_cost(b.totals.total_cost_usd) };
-            make_bar(label, scaled, color, is_sel)
+            let color = if is_sel {
+                Color::Yellow
+            } else {
+                color_for_cost(b.totals.total_cost_usd)
+            };
+            let text = format!("${:.2}", b.totals.total_cost_usd);
+            make_bar(label, height, text, color, is_sel)
         })
         .collect();
 
@@ -508,32 +542,41 @@ fn draw_blocks_view(f: &mut Frame, area: Rect, app: &mut App) {
         let start = end.saturating_sub(max_bars);
         let window = &app.blocks[start..end];
 
+        // Cycle the active block's color through 4 distinct shades so the
+        // pulse is obvious. Numeric value is never touched.
+        let active_color = match ((pulse * 4.0) as u32).min(3) {
+            0 => Color::DarkGray,
+            1 => Color::Green,
+            2 => Color::LightGreen,
+            _ => Color::White,
+        };
         let bars: Vec<Bar> = window
             .iter()
             .enumerate()
             .map(|(i, b)| {
                 let abs_idx = start + i;
                 let is_sel = abs_idx == selected;
-                let mut v = (b.totals.total_cost_usd * 100.0 * anim) as u64;
-                if b.is_active {
-                    v = ((v as f64) * pulse) as u64;
-                }
+                let height = (b.totals.total_cost_usd * 100.0 * anim) as u64;
                 let label = b.start.to_string()[5..16].to_string(); // "MM-DDTHH:MM"
                 let color = if b.is_gap {
                     Color::DarkGray
                 } else if b.is_active {
-                    Color::Green
+                    active_color
                 } else if is_sel {
                     Color::Yellow
                 } else {
                     color_for_cost(b.totals.total_cost_usd)
                 };
-                make_bar(label, v, color, is_sel)
+                let text = format!("${:.2}", b.totals.total_cost_usd);
+                make_bar(label, height, text, color, is_sel)
             })
             .collect();
 
         let chart = BarChart::default()
-            .block(Block::default().borders(Borders::ALL).title(" 5-hour blocks (cost USD × 100) "))
+            .block(Block::default().borders(Borders::ALL).title(format!(
+                " {} 5-hour blocks (cost USD × 100) ",
+                app.spinner()
+            )))
             .data(BarGroup::default().bars(&bars))
             .bar_width(bar_w)
             .bar_gap(gap)
