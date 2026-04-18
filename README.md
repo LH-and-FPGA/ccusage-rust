@@ -4,6 +4,28 @@ Rust port of [ccusage](https://github.com/ryoppippi/ccusage). Reads Claude Code'
 
 Single static binary, no Node toolchain required.
 
+## Interactive TUI
+
+```sh
+rcusage tui
+```
+
+A keyboard-driven dashboard with four switchable views (Daily / Monthly / Session / Blocks). Each view has an animated bar chart of cost-per-bucket, a scrollable list, and a detail panel showing per-token breakdowns and models for the selected entry.
+
+**Animations** — bar grow-in (cubic ease-out, 800ms) on view switch, a braille spinner in the chart title, a blinking dot on the active tab, and a 4-shade color cycle on currently-active 5-hour blocks. Numeric labels stay stable; only colors and bar heights animate.
+
+**Keys**
+
+| key | action |
+|---|---|
+| `1` `2` `3` `4` | jump to view |
+| `Tab` / `h` `l` / `←` `→` | next / previous view |
+| `↑` `↓` / `j` `k` | move selection |
+| `g` / `G` | first / last bucket |
+| `q` / `Esc` | quit |
+
+All standard flags (`--mode`, `--offline`, `--timezone`) work with `tui` too.
+
 ## Install
 
 ```sh
@@ -16,6 +38,7 @@ cargo build --release
 ## Usage
 
 ```sh
+rcusage tui              # interactive dashboard (see above)
 rcusage daily            # group by day
 rcusage monthly          # group by month
 rcusage session          # group by project + sessionId
@@ -73,7 +96,8 @@ src/
 ├── cost.rs        # tiered pricing + 3 cost modes
 ├── aggregate.rs   # daily / monthly / session group-by
 ├── blocks.rs      # 5-hour block + gap detection
-└── output.rs      # table + JSON renderers
+├── output.rs      # table + JSON renderers
+└── tui.rs         # ratatui dashboard
 assets/
 └── litellm_pricing.json    # offline pricing snapshot
 ```
